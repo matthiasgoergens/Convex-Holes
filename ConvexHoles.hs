@@ -14,11 +14,11 @@ import Control.Monad.State.Strict
 type X = Float -- (Ratio Integer)
 data Y = Unten | Y !(Float) | Oben deriving (Show, Eq, Ord)
 
-data Point = Point !X !Y deriving (Eq)
+data Point = Point !X !Y deriving (Eq, Ord)
 
-instance Ord Point where
-    compare = compare `on` x
-        where x (Point x0 _) = x0
+--instance Ord Point where
+--    compare = compare `on` x
+--        where x (Point x0 _) = x0
 
 instance Show Point where
     show (Point x (Y y)) = "("++show x' ++ " " ++ show y' ++ ") "
