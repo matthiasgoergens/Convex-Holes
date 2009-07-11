@@ -10,24 +10,44 @@ import Debug.Trace
 import System
 import qualified Data.Set as S
 import Control.Monad.State.Strict
+import Test.QuickCheck
+import Control.Applicative
 
-type X = Float -- (Ratio Integer)
-data Y = Unten | Y !(Float) | Oben deriving (Show, Eq, Ord)
+type X = Float
+type Y = Float
+
+data R = Runter | R !(Float) | Hoch
+       deriving (Show, Eq, Ord)
+
+makeR :: Point -> Point -> R
+makeR (Point x0 y0) (Point x1 y1)
+    = case compare x1 x0 of
+        LT -> error "Nur vorwaerts!"
+        EQ -> case compare y1 y0 of
+                LT -> Runter
+                EQ -> error "Points are equal!"
+                GT -> Hoch
+        GT -> R $ ((y1 - y0) / (x1 - x0))
+
+instance Arbitrary Point where
+    arbitrary = do x <- arbitrary
+                   y <- arbitrary
+                   return $ Point x y
+    shrink (Point x (Y y)) = do x' <- shrink x
+                                y' <- shrink y
+                                return $ Point x' y'
 
 data Point = Point !X !Y deriving (Eq, Ord)
 
---instance Ord Point where
---    compare = compare `on` x
---        where x (Point x0 _) = x0
-
 instance Show Point where
-    show (Point x (Y y)) = "("++show x' ++ " " ++ show y' ++ ") "
-        where x', y' :: Float
-              x' = x
-              y' = y
+    show (Point x y) = "("++ sx ++ " " ++ sy ++ ")"
+        where sx = m0 $ show x
+              sy = m0 $ show y
+              m0 s = case reverse s of
+                       '0':'.':_ -> reverse . drop 2 . reverse $ s
+                       _ -> s
 
-data Ray = Ray { anfang :: !Point, ende :: !Point}
-           deriving (Show, Ord, Eq)
+
 
 areaL :: Lines -> Float
 areaL [] = 0
@@ -56,18 +76,32 @@ areaSup p@(Poly lower@(l@(Point lx ly):_) upper@(u@(Point ux uy):_) inf sup)
 
 
 
-meetScan :: X -> Ray -> Y
-meetScan _ (Ray _ (Point _ Unten))
-    = Unten
-meetScan _ (Ray _ (Point _ Oben))
-    = Oben
+meetScan :: X -> Ray -> (Y,Y)
+meetScan _ (Ray (Point _ Unten) _)
+    = error "meetScan: Ausgang des Strahls ist Unten"
+meetScan _ (Ray (Point _ Oben) _)
+    = error "meetScan: Ausgang des Strahls ist Oben"
+meetScan scan (Ray (Point x0 (Y y0)) (Point x1 Unten))
+    | scan == x0 && x0 == x1 
+        = (Unten, Y y0)
+    | otherwise = (Unten, Unten)
+meetScan scan (Ray (Point x0 (Y y0)) (Point x1 Oben))
+    | scan == x0 && x0 == x1 
+        = (Y y0, Oben)
+    | otherwise = (Oben, Oben)
 meetScan ( scan) (Ray (Point ( x0) (Y y0))
                        (Point ( x1) (Y y1)))
     = if dxRay == 0
-      then if dyRay > 0
-           then Oben
-           else Unten
-      else (Y (dyEcht + y0))
+      then if scan == x0
+           then case compare dyRay 0 of
+                  GT -> (Y y0, Oben)
+                  EQ -> error "meetScan: delta(ray) is (0,0), and scanline is at ray."
+                  LT -> (Unten, Y y0)
+           else case compare dyRay 0 of
+                  GT -> (Oben, Oben)
+                  EQ -> error "meetScan: delta(ray) is (0,0)"
+                  LT -> (Unten, Unten)
+      else (Y (dyEcht + y0), Y (dyEcht + y0))
     where dxRay = x1 - x0
           dyRay = y1 - y0
 
@@ -83,13 +117,13 @@ data Poly = Poly !Lines !Lines
                  !Ray !Ray deriving (Ord, Eq)
 
 instance Show CPoly where
-    show (CPoly l u) = "CPoly " ++ (concat . map show . reverse $ l) ++ "\n\t" ++ (concat . map show . reverse $ u)
+    show (CPoly l u) = "CPoly " ++ (concat . map show . reverse $ u) ++ "\n\t" ++ (concat . map show . reverse $ l)
 
 
 instance Show Poly where
-    show (Poly l u rInf rSup) = "Poly " ++ (concat . map show . reverse $ l) ++ "\n\t" ++ (concat . map show . reverse $ u) ++
-                                "\n\t"++show rInf ++ "\n\t" ++ show rSup ++
-                                "\n\t"++show (meet rInf rSup)
+    show (Poly l u rInf rSup) = "\nPoly " ++ (concat . map show . reverse $ u) ++ "\n\t" ++ (concat . map show . reverse $ l) ++
+                                "\n\t"++show rSup ++ "\n\t" ++ show rInf ++
+                                "\n\tm: "++show (meet rInf rSup)
                         
 meet :: Ray -> Ray -> Maybe Point
 meet (Ray (Point ( x1) (Y y1))
@@ -117,26 +151,34 @@ openNew links@(Point x y) = (Poly [links] [links]
 -- WriterT Trace (State z) a
 
 treatScan1o1 :: Point -> Poly -> WriterT [CPoly] (State Float) (S.Set Poly)
-treatScan1o1 pN@(Point xN yN) polyO@(Poly lower@(l@(Point lx ly):_) 
-                                          upper@(u@(Point ux uy):_)
-                                          inf         sup)
+treatScan1o1 pN@(Point xN yN) polyO@(Poly lower@(l:_) 
+                                          upper@(u:_)
+                                          inf@(Ray inf0 inf1)
+                                          sup@(Ray sup0 sup1))
     = if infNy < supNy
       then do bestSeen <- get 
-              return . S.fromList . filter (((bestSeen-1)<= ) . areaSup) $ polyN
+              return . S.fromList . filter (((bestSeen)<= ) . areaSup) $ polyN
       else do let c = close polyO
-              tell [] -- [c]
+              {- trace ("closed:\t"++show c++"\narea:\t"++show (areaCPoly c)) $ -}
+              tell [c]
               modify (max (areaCPoly c))
               return $ S.empty
-    where infNy = meetScan xN inf
-          supNy = meetScan xN sup
+    where (infNy,_) = meetScan xN inf
+          (_,supNy) = meetScan xN sup
 
-          polyN = if yN <= infNy || supNy <= yN
+          polyN = if (yN < infNy || supNy < yN)
                   then [Poly lower upper inf sup]
                   else [Poly (pN:lower) upper (Ray l pN) sup
-                       ,Poly lower upper (Ray l pN) sup
+--                     ,Poly     lower  upper (Ray inf0 pN) sup
+                       ,Poly     lower  upper (Ray l pN) sup
                              
                        ,Poly lower (pN:upper) inf (Ray u pN)
-                       ,Poly lower upper inf (Ray u pN)]
+--                     ,Poly lower     upper  inf (Ray sup0 pN)
+                       ,Poly lower     upper  inf (Ray u pN)
+                       ]
+
+
+
 
 --           poly1 = if infNy > yN
 --                   then Poly lower upper inf sup
@@ -147,6 +189,8 @@ treatScan1o1 pN@(Point xN yN) polyO@(Poly lower@(l@(Point lx ly):_)
 --                   else Poly lower (pN:upper) inf (Ray u pN)
 -- --                  Poly lower upper inf           (min supY yN)
 
+
+
 close :: Poly -> CPoly
 close polyO@(Poly lower@(l:_)
                   upper@(u:_)
@@ -156,7 +200,7 @@ close polyO@(Poly lower@(l:_)
         EQ -> CPoly lower upper
         GT -> CPoly lower (l:upper)
 
-prop_close left lo up = l == u
+prop_close left (NonEmpty lo) (NonEmpty up) = l == u
     where (CPoly (l:_) (u:_)) = close (Poly (map mkPoint lo ++ [mkPoint left]) (map mkPoint up ++ [mkPoint left]) undefined undefined)
 
 mkPoint (x,y) = Point ( x) (Y y)
@@ -165,18 +209,18 @@ run1p :: Point -> S.Set Poly -> WriterT [CPoly] (State Float) (S.Set Poly)
                              -- Writer [Poly] (S.Set Poly)
 run1p pN polys = liftM (S.insert (openNew pN) . S.unions)
                  . sequence . fmap (treatScan1o1 pN) . S.toList
-                 . trace ("#polys:\t" ++ show (S.size polys) ++ "\tpn:\t"++show pN)
+                 -- . trace ("#polys:\t" ++ show (S.size polys) ++ "\tpn:\t"++show pN)
                  $ polys
 
 --                 >>= liftM ((:) (openNew pN))
 
 
 run :: [Point] -> ((S.Set Poly, [CPoly]), Float)
-run ps = (runState (runWriterT (doAll ps)) 0)
+run ps = (runState (runWriterT (doAll ps)) (-999))
     --runWriter . doAll
       where doAll :: [Point] -> WriterT [CPoly] (State Float) (S.Set Poly)
                      -- Writer [Poly] (S.Set Poly)
-            doAll = foldl (>>=) (return $ S.empty) . map run1p . sort
+            doAll = foldl (>>=) (return $ S.empty) . map run1p . nub . sort
 
 allClose = map close . uncurry (++)
 
@@ -224,7 +268,38 @@ t2 = map mkPoint $
      ,(273, -175) 
      ,(913, -860) ]
 --     [(-883, -38) ,(-827, -607) ,(-811, 286) ,(-754, 70) ,(-665, -726) ,(-646, -422) ,(-488, 732) ,(-477, -23) ,(-454, -947) ,(-389, 938) ,(-178, 540) ,(-60, 138) ,(54, 316) ,(273, -175) ,(331, 698) ,(491, 368) ,(527, 144) ,(806, 528) ,(913, -860) ]
-     
+
+negateX (Point x (Y y)) = (Point (-x) (Y y))
+negateY (Point x (Y y)) = (Point (x) (Y (-y)))
+negateXY = negateX . negateY
+
+bestC t = let ((o,c),bestClosed) = run $  t
+              bestOpen = bestCPoly $ map close (toList o)
+          in max bestClosed bestOpen 
+
+mkPoints xy = t
+    where (x,y) = unzip xy
+          t = map mkPoint $ zip (map fromIntegral x) (map fromIntegral y)
+
+prop_bestCX (NonEmpty xy) = bestC t == bestC (map negateX t)
+    where t = mkPoints xy
+
+prop_bestCY (NonEmpty xy) = bestC t == bestC (map negateY t)
+    where t = mkPoints xy
+prop_bestCXY (NonEmpty xy) = bestC t == bestC (map (negateX . negateY) t)
+    where t = mkPoints xy
+
+doT t = do let ((o,c),bestClosed) = run $  t
+               bestOpen = bestCPoly $ map close (toList o)
+           putStrLn "-------"
+           putStr "bestClosed:\t"
+           print bestClosed
+           putStr "open:\t"
+           print (assoc (areaCPoly . close) . toList $ o)
+           putStr "bestOpen:\t"
+           print bestOpen
+           putStr "best:\t"
+           putStrLn $ show $ max bestClosed bestOpen 
 
 main = do {- putStrLn $ unlines $ map show $ c
           putStrLn "---"
@@ -235,13 +310,44 @@ main = do {- putStrLn $ unlines $ map show $ c
 --          putStrLn "---"
           args <- getArgs
           let n = read (args !! 0)
-              ((o,c),bestClosed) = run $  take n (t s0)
-              bestOpen = bestCPoly $ map close (toList o)
-          print bestClosed
-          print bestOpen
-          putStrLn $ show $ max bestClosed bestOpen 
+              t2 = take n (t s0)
+              t' = tx
+          doT t'
+--          putStrLn "negated:"
+--          doT (map negateX t')
+
 --          print $ sort t'
           
     where 
           t' = undefined
           _ = t2
+
+t3 = mkPoints [      (1,-1)
+              ,(0,0),(1,0)
+                    ,(1,1)]
+    --mkPoints [(9,0),(9,1),(9,2),(0,0)]
+
+-- p00
+-- p1n
+-- 1
+
+-- Poly (0 Y 0)(1 Y (-1.0))
+--        (0 Y 0)(1 Y 0)
+--        [(0 Y 0) -> (1 Y (-1.0))]
+--        [(0 Y 0) -> (1 Y 0)]
+--        m: Just (0 Y (-0.0)),0.5)
+
+
+tx = mkPoints y
+x=[
+--          {-,(3,1)-} ,(4,1)
+
+                       (2,2)
+   ,(0,0),       (1,0), (2,0)]
+
+y = [(0,3)
+
+    ,(0,1),(1,1)
+               ,(2,0)]
+
+
