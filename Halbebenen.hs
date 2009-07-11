@@ -51,6 +51,8 @@ prop_makeH p0 p1 p = inside p0 h &&
                      inside p h == (isCCW p0 p1 p >= 0)
     where h = makeH p0 p1
 
+prop_makeH1 p0 p = inside p (makeH p0 p0) 
+
 a2 ((Point ax ay), (Point bx by), (Point cx cy))
     = ax * (by - cy) +
       bx * (cy - ay) +
