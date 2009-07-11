@@ -14,6 +14,7 @@ import Control.Monad.State.Strict
 import Test.QuickCheck
 import Control.Applicative
 import Data.Maybe
+import Halbebenen
 
 trace = flip const
 
@@ -55,15 +56,14 @@ extrapolate _ Hoch _ = Nothing
 --         = (Y y0, Oben)
 --     | otherwise = (Oben, Oben)
 
-allowed :: X -> Point -> R -> Maybe (Interval Y)
 allowed scan p@(Point x0 y0) r
-    = case compare scan x0 
-      LT -> error "allowed: Please only ask when scan > x0."
-      EQ -> case r of
+    = case compare scan x0 of
+        LT -> error "allowed: Please only ask when scan > x0."
+        EQ -> case r of
               Runter -> Just $ LOpen y0
               R _ -> Just $ Here y0
               Hoch -> Just $ UOpen y0
-      GT -> do liftM Here $ extrapolate p r scan
+        GT -> do liftM Here $ extrapolate p r scan
 
 infInt :: Interval Y -> Interval Y
 infInt i@(Here x) = UOpen x
@@ -287,7 +287,7 @@ close polyO@(Poly lower@(l:_)
 prop_close left (NonEmpty lo) (NonEmpty up) = l == u
     where (CPoly (l:_) (u:_)) = close (Poly (map mkPoint lo ++ [mkPoint left]) (map mkPoint up ++ [mkPoint left]) undefined undefined)
 
-mkPoint  = uncurry Point
+
 
 run1p :: Point -> [Poly] -> WriterT [CPoly] (State Float) [Poly]
                              -- Writer [Poly] (S.Set Poly)
