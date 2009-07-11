@@ -15,34 +15,40 @@ import Test.QuickCheck
 import Control.Applicative
 import Data.Maybe
 import Halbebenen
+import ATools
+
 
 trace = flip const
-
-type X = Float
-type Y = Float
 
 data R = Runter | R !(Float) | Hoch
        deriving (Show, Eq, Ord)
 
 makeR :: Point -> Point -> R
-makeR (Point x0 y0) (Point x1 y1)
+makeR (Point _ _ 0) _ = error "zero first!"
+makeR _ (Point _ _ 0) = error "zero second!"
+makeR (Point x0r y0r z0r) (Point x1r y1r z1r)
     = case compare x1 x0 of
         LT -> error "Nur vorwaerts!"
         EQ -> case compare y1 y0 of
                 LT -> Runter
                 EQ -> error "Points are equal!"
                 GT -> Hoch
-        GT -> R $ ((y1 - y0) / (x1 - x0))
+        GT -> R $ (y1 - y0) / (x1 - x0)
+      where x0 = fromRational (x0r % z0r)
+            x1 = fromRational (x1r % z1r)
+            y0 = fromRational (y0r % z0r)
+            y1 = fromRational (y1r % z1r)
+            
 
-data Interval x = LOpen x | Closed x x | Here x | UOpen x
-                | LUOpen
-                  deriving EQ
+-- data Interval x = LOpen x | Closed x x | Here x | UOpen x
+--                 | LUOpen
+--                   deriving Eq
 
-extrapolate :: Point -> R -> X -> Maybe Y
-extrapolate (Point x0 y0) (R r) atX
-    = Just ((atX - x0) * r + y0)
-extrapolate _ Runter _ = Nothing
-extrapolate _ Hoch _ = Nothing
+-- extrapolate :: Point -> R -> X -> Maybe Y
+-- extrapolate (Point x0 y0) (R r) atX
+--     = Just (fromIntegral (atX - x0) * r + y0)
+-- extrapolate _ Runter _ = Nothing
+-- extrapolate _ Hoch _ = Nothing
 
 
 -- meetScan _ (Ray (Point _ Oben) _)
@@ -56,126 +62,99 @@ extrapolate _ Hoch _ = Nothing
 --         = (Y y0, Oben)
 --     | otherwise = (Oben, Oben)
 
-allowed scan p@(Point x0 y0) r
-    = case compare scan x0 of
-        LT -> error "allowed: Please only ask when scan > x0."
-        EQ -> case r of
-              Runter -> Just $ LOpen y0
-              R _ -> Just $ Here y0
-              Hoch -> Just $ UOpen y0
-        GT -> do liftM Here $ extrapolate p r scan
+-- allowed scan p@(Point x0 y0) r
+--     = case compare scan x0 of
+--         LT -> error "allowed: Please only ask when scan > x0."
+--         EQ -> case r of
+--               Runter -> Just $ LOpen y0
+--               R _ -> Just $ Here y0
+--               Hoch -> Just $ UOpen y0
+--         GT -> do liftM Here $ extrapolate p r scan
 
-infInt :: Interval Y -> Interval Y
-infInt i@(Here x) = UOpen x
-infInt i@(Closed l u) = UOpen l
-infInt i@(LOpen y) = UOpen y
-infInt i@(UOpen _) = i
+-- combine :: (Interval Y) -> (Interval Y) -> (Interval Y)
+-- combine lowerInter upperInter = 
 
-supInt :: Interval Y -> Interval Y
-infInt i@(Here x) = LOpen x
-infInt i@(Closed l u) = LOpen u
-infInt i@(LOpen y) = UOpen y
-infInt i@(UOpen _) = i
-
-combine :: (Interval Y) -> (Interval Y) -> (Interval Y)
-combine lowerInter upperInter = 
-
-prop_makeR p0@(Point x0 y0) p1@(Point x1 y1) 
-    = (x0 < x1) && (y0 /= y1) ==>
-       abs (y1 - y') < 0.001
-    where r = makeR p0 p1
-          Just y' = extrapolate p0 r x1
+-- prop_makeR p0@(Point x0 y0) p1@(Point x1 y1) 
+--     = (x0 < x1) && (y0 /= y1) ==>
+--        abs (y1 - y') < 0.001
+--     where r = makeR p0 p1
+--           Just y' = extrapolate p0 r x1
 
 
 cmp :: Point -> R -> Point -> Ordering
 cmp p0 r pn = compare (makeR p0 pn) r
 
-instance Arbitrary Point where
-    arbitrary = do (x::Integer) <- arbitrary
-                   (y::Integer) <- arbitrary
-                   return $ Point (fromIntegral x) (fromIntegral y)
-    shrink (Point x y) = do x' <- shrink x
-                            y' <- shrink y
-                            return $ Point x' y'
+areaL2 :: Lines -> Integer
+areaL2 [] = 0
+areaL2 [_] = 0
+areaL2 l = sum $ zipWith areaTrapez2 (init l) (tail l)
+areaTrapez2 a b
+    = (x1 - x0) * (y0+y1)
+      where (Point2 (x0) (y0)) = mkPoint2 a
+            (Point2 ( x1) (y1)) = mkPoint2 b
 
-data Point = Point {x :: !X, y :: !Y} deriving (Eq, Ord)
-
-instance Show Point where
-    show (Point x y) = "("++ sx ++ " " ++ sy ++ ")"
-        where sx = m0 $ show x
-              sy = m0 $ show y
-              m0 s = case reverse s of
-                       '0':'.':_ -> reverse . drop 2 . reverse $ s
-                       _ -> s
-
-areaL :: Lines -> Float
-areaL [] = 0
-areaL [_] = 0
-areaL (p1:ps@(p2:_)) = areaTrapez p1 p2 + areaL ps
-areaTrapez (Point (x0) (y0)) (Point ( x1) (y1))
-    = (x1 - x0) * (y0+y1) / 2
-
-areaCPoly :: CPoly -> Float
-areaCPoly (CPoly lower upper) = areaL lower - areaL upper
+areaCPoly2 :: CPoly -> Integer
+areaCPoly2 (CPoly lower upper) = areaL2 lower - areaL2 upper
 
 range = (-1000,1000)
 (rI,rS) = range
-maxA = (rS-rI) ^ 2
+maxA2 = 2 * (rS-rI) ^ 2
 
-areaSup :: Poly -> Float
-areaSup p@(Poly lower@(l@(Point lx ly):_) upper@(u@(Point ux uy):_) inf sup)
-    = case meet l inf u sup of
-        Nothing -> maxA
-        Just (m@(Point mx _))
-            -> if mx <= lx || mx <= ux
-               then maxA
-               else areaCPoly (CPoly (m:lower) (m:upper))
+areaSup2 :: Poly -> Integer
+areaSup2 _ = ceiling undefined
+areaSup2 p@(Poly lower@(l@(Point lx ly lz):_) upper@(u@(Point ux uy uz):_) inf sup)
+    = case meet2 inf sup of
+        -- Solte noch pruefen, ob die beiden 
+        (Point _ _ 0) -> maxA2
+        m@(Point x y z)
+            -> if m `linksVon` l || m `linksVon` u
+               then maxA2
+               else areaCPoly2 (CPoly (m:lower) (m:upper))
+
 data TryAdd = TryAdd (Point -> Poly -> Poly)
-instance Arbitrary TryAdd where
-    arbitrary = oneof [tryAddLower, tryAddUpper]
+-- instance Arbitrary TryAdd where
+--    arbitrary = oneof [tryAddLower, tryAddUpper]
 
-instance Arbitrary Poly where
-    arbitrary = do links <- arbitrary
-                   sized (tryAddN (openNew links))
-        where tryAddN poly 0 = return poly
-              tryAddN poly n = if not $ isOpenAt (rechts poly) poly
-                               then return poly
-                               else do (TryAdd add) <- arbitrary
-                                       p <- arbitrary
-                                       case add p poly of
-                                         Nothing -> tryAddN poly n
-                                         Just poly' -> tryAddN poly' (n-1)
+-- instance Arbitrary Poly where
+--     arbitrary = do links <- arbitrary
+--                    sized (tryAddN (openNew links))
+--         where tryAddN poly 0 = return poly
+--               tryAddN poly n = if not $ isOpenAt (rechts poly) poly
+--                                then return poly
+--                                else do (TryAdd add) <- arbitrary
+--                                        p <- arbitrary
+--                                        case add p poly of
+--                                          Nothing -> tryAddN poly n
+--                                          Just poly' -> tryAddN poly' (n-1)
 
 rechts :: Poly -> X
-rechts (Poly lower upper _ _) = max `on` (x . head)
+rechts (Poly lower upper _ _) = (max `on` (x . head)) lower upper
 links :: Poly -> X
-links (Poly lower upper _ _) = min `on` (x . last)
+links (Poly lower upper _ _) = (min `on` (x . last)) lower upper
 
-addable :: Point -> Poly -> Bool
-addable p@(Point x y) (Poly lower@(l:_) upper@(u:_) inf sup)
-    = inf <= infN && supN <= sup
-    where infN = makeR l p
-          supN = makeR u p
+-- addable :: Point -> Poly -> Bool
+-- addable p@(Point x y) (Poly lower@(l:_) upper@(u:_) inf sup)
+--     = inf <= infN && supN <= sup
+--     where infN = makeR l p
+--           supN = makeR u p
 
-tryAddLower :: Integer -> Integer -> Poly -> Poly
-tryAddLower (Point dx y) poly@(Poly (lower@(l@(Point lx ly):_)) upper inf sup)
-    = if  px < lx || (infN < inf)
-      then Nothing
-      else Just (Poly (p:lower) upper infN sup)
-    where infN = makeR l p
-          p@(Point px py) = Point (lx + abs dx) y
+-- tryAddLower :: Integer -> Integer -> Poly -> Poly
+-- tryAddLower (Point dx y) poly@(Poly (lower@(l@(Point lx ly):_)) upper inf sup)
+--     = if px < lx || (infN < inf)
+--       then Nothing
+--       else Just (Poly (p:lower) upper infN sup)
+--     where infN = makeR l p
+--           p@(Point px py) = Point (lx + abs dx) y
           
-          
+-- tryAddUpper :: Point -> Poly -> Poly
+-- tryAddUpper (Point dx y) poly@(Poly lower upper@(u@(Point ux uy):_) inf sup)
+--     = if  px < ux || (sup < supN)
+--       then Nothing
+--       else Just (Poly l (p:upper) inf supN)
+--     where supN = makeR l p 
+--           p@(Point px py) = Point (lx + abs dx) y
 
-tryAddUpper :: Point -> Poly -> Poly
-tryAddUpper (Point dx y) poly@(Poly lower upper@(u@(Point ux uy):_) inf sup)
-    = if  px < ux || (sup < supN)
-      then Nothing
-      else Just (Poly l (p:upper) inf supN)
-    where supN = makeR l p 
-          p@(Point px py) = Point (lx + abs dx) y
-
-prop_area p = areaSup p >= areaCPoly (close p)
+prop_area p = areaSup2 p >= areaCPoly2 (close p)
 
 
 
@@ -185,7 +164,7 @@ type Lines = [Point]
 --data Poly = Poly {lower :: Lines ,upper :: Lines
 --                 ,inf   :: Ray   ,sup   :: Ray}
 data Poly = Poly !Lines !Lines
-                 !R !R deriving (Ord, Eq)
+                 !Halbebene !Halbebene deriving (Ord, Eq)
 
 instance Show CPoly where
     show (CPoly l u) = "CPoly " ++ (concat . map show . reverse $ u) ++ "\n\t" ++ (concat . map show . reverse $ l)
@@ -193,87 +172,87 @@ instance Show CPoly where
 
 instance Show Poly where
     show (Poly l u inf sup) = "\nPoly " ++ (concat . map show . reverse $ u) ++ "\n\t" ++ (concat . map show . reverse $ l) ++
-                                "\n\t"++show sup ++ "\n\t" ++ show inf ++
-                                "\n\tm: "++show (meet (last l) inf (last u) sup)
+                                "\n\t"++show sup ++ "\n\t" ++ show inf
+--                              ++ "\n\tm: "++show (meet (last l) inf (last u) sup)
     
-meet :: Point -> R -> Point -> R -> Maybe Point
-meet p0@(Point x0 y0) (R r0) p1@(Point x1 y1) (R r1)
-    | r0 == r1 = Nothing
-    | otherwise = Just $ Point x y
-    where x = (x1*r1 - x0*r0 + y0 - y1) / (r1-r0)
-          y = r0 * (x - x0) + y0
-meet _ _ _ _ = Nothing
+-- meet :: Point -> R -> Point -> R -> Maybe Point
+-- meet p0@(Point x0 y0) (R r0) p1@(Point x1 y1) (R r1)
+--     | r0 == r1 = Nothing
+--     | otherwise = Just $ Point x y
+--     where x = (x1*r1 - x0*r0 + y0 - y1) / (r1-r0)
+--           y = r0 * (x - x0) + y0
+-- meet _ _ _ _ = Nothing
 
 data CPoly = CPoly {l :: !Lines, u :: !Lines}
            deriving (Ord, Eq)
 
 openNew :: Point -> Poly
 openNew links@(Point x y) = (Poly [links] [links]
-                             Runter
-                             Hoch)
+                             (makeH links (links - Point 0 1))
+                             (makeH links (links + Point 0 1)))
+--                           Runter  Hoch)
 
 
 -- WriterT Trace (State z) a
 
 
 
-isOpenAt scan poly@(Poly (l@(Point lx ly):_)
-                    (u@(Point ux uy):_)
+isOpenAt scan poly@(Poly _
+                    _
                     inf
                     sup)
-    = case compare scan (rechts poly) of
-        LT -> True
-        EQ -> if (lx == ux) 
-              then abs (uy - ly) > 1
-              else True
-        GT -> case (inf, sup) of
-             (_, Runter) -> False
-             (Hoch, _) -> False
-             (R _, R _)
-                 -> fromMaybe (error "Should not happen (isClosedAt)") $
-                    do syInf <- liftM floor $ extrapolate l inf scan
-                       sySup <- liftM ceiling $ extrapolate u sup scan
-                       return (syInf < sySup)
-             _ -> True
+    = let p = Point scan 0
+      in inside p inf || inside p sup
+--       case compare scan (rechts poly) of
+--         LT -> True
+--         EQ -> if (lx == ux) 
+--               then abs (uy - ly) > 1
+--               else True
+--         GT -> case (inf, sup) of
+--              (_, Runter) -> False
+--              (Hoch, _) -> False
+--              (R _, R _)
+--                  -> fromMaybe (error "Should not happen (isClosedAt)") $
+--                     do syInf <- liftM floor $ extrapolate l inf scan
+--                        sySup <- liftM ceiling $ extrapolate u sup scan
+--                        return (syInf < sySup)
+--              _ -> True
 
-examine :: Poly -> WriterT [CPoly] (State Float) (Maybe Poly)
+examine :: Poly -> WriterT [CPoly] (State Integer) (Maybe Poly)
 examine p = do bestSeen <- get
-               (if areaSup p < bestSeen
+               (if areaSup2 p < bestSeen
                 then return Nothing
-                else do modify (max (areaCPoly (close p)))
+                else do modify (max (areaCPoly2 (close p)))
                         return $ Just p)
                                
 
-treatScan1o1 :: Point -> Poly -> WriterT [CPoly] (State Float) [Poly]
+treatScan1o1 :: Point -> Poly -> WriterT [CPoly] (State Integer) [Poly]
 treatScan1o1 pN@(Point xN yN) polyO@(Poly lower@(l:_) 
                                           upper@(u:_)
                                           inf
                                           sup)
     = if True -- isOpenAt xN $ polyO
-      then (sequence . map examine . {- nub . -} sort $ untenlang ++ obenlang)
+      then (sequence . map examine $ polyN)
            >>= return . catMaybes
       else do let c = close polyO
               {- trace ("closed:\t"++show c++"\narea:\t"++show (areaCPoly c)) $ -}
               tell [c]
-              modify (max (areaCPoly c))
+              modify (max (areaCPoly2 c))
               return $ []
     where 
-          infN = makeR l pN
-          supN = makeR u pN
+          infN = makeH l pN
+          supN = makeH u pN
 
-          untenlang
-              = if supN <= sup
-                then [Poly lower (pN:upper) inf supN
-                     ,Poly lower     upper  inf supN
-                     ]
-                else trace ("No untenlang for "++show polyO ++ " at " ++ show pN) $ []
-          obenlang 
-              = if inf <= infN
-                then [Poly (pN:lower) upper infN sup
-                     ,Poly     lower  upper infN sup
-                     ]
-                else trace ("No obenlang for "++show polyO ++ " at " ++ show pN) $ []
-
+          polyN = case (inside pN inf, inside pN sup) of
+                    (True, True) -> [Poly lower (pN:upper) inf supN
+                                    ,Poly lower     upper  inf supN
+                                    ] ++
+                                   [Poly (pN:lower) upper infN sup
+                                   ,Poly     lower  upper infN sup
+                                   ]
+                    (False, False) -> trace ("No continuation for "++show polyO ++ " at " ++ show pN) $
+                                      []
+                    _ -> [polyO]
 
 close :: Poly -> CPoly
 close polyO@(Poly lower@(l:_)
@@ -289,7 +268,7 @@ prop_close left (NonEmpty lo) (NonEmpty up) = l == u
 
 
 
-run1p :: Point -> [Poly] -> WriterT [CPoly] (State Float) [Poly]
+run1p :: Point -> [Poly] -> WriterT [CPoly] (State Integer) [Poly]
                              -- Writer [Poly] (S.Set Poly)
 run1p pN polys = liftM ((openNew pN:) . concat)
                  . sequence . fmap (treatScan1o1 pN)
@@ -299,17 +278,17 @@ run1p pN polys = liftM ((openNew pN:) . concat)
 --                 >>= liftM ((:) (openNew pN))
 
 
-run :: [Point] -> (([Poly], [CPoly]), Float)
+run :: [Point] -> (([Poly], [CPoly]), Integer)
 run ps = (runState (runWriterT (doAll ps)) (-999))
     --runWriter . doAll
-      where doAll :: [Point] -> WriterT [CPoly] (State Float) [Poly]
+      where doAll :: [Point] -> WriterT [CPoly] (State Integer) [Poly]
                      -- Writer [Poly] (S.Set Poly)
             doAll = foldl (>>=) (return $ []) . map run1p . nub . sort
 
 allClose = map close . uncurry (++)
 
-bestCPoly :: [CPoly] -> (Float) --[Float]
-bestCPoly cp = maximum . map (areaCPoly) $ cp
+bestCPoly :: [CPoly] -> Integer --[Float]
+bestCPoly cp = maximum . map (areaCPoly2) $ cp
 
 
 assoc f l = zip l (map f l)
@@ -383,7 +362,8 @@ doT t = do let ((o,c),bestClosed) = run $  t
            putStr "bestOpen:\t"
            print bestOpen
            putStr "best:\t"
-           putStrLn $ show $ max bestClosed bestOpen 
+           putStrLn $ show $ max bestClosed bestOpen
+           putStrLn $ show $ fromIntegral (max bestClosed bestOpen) / 2
 
 main = do {- putStrLn $ unlines $ map show $ c
           putStrLn "---"
@@ -422,18 +402,18 @@ t3 = mkPoints [      (1,-1)
 --        m: Just (0 Y (-0.0)),0.5)
 
 
-tx = mkPoints z
-x=[
+tx = mkPoints pz
+px=[
 --          {-,(3,1)-} ,(4,1)
 
                        (2,2)
    ,(0,0),       (1,0), (2,0)]
 
-y = [(0,3)
+py = [(0,3)
 
     ,(0,1),(1,1)
                ,(2,0)]
 
-z = [(0,0),(1,0),(1,1)]
+pz = [(0,0),(1,0),(1,1)]
 
 
