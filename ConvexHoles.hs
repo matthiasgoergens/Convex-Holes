@@ -33,11 +33,35 @@ makeR (Point x0 y0) (Point x1 y1)
                 GT -> Hoch
         GT -> R $ ((y1 - y0) / (x1 - x0))
 
+data Interval x = LOpen x | Here x | UOpen x
+
 extrapolate :: Point -> R -> X -> Maybe Y
 extrapolate (Point x0 y0) (R r) atX
     = Just ((atX - x0) * r + y0)
 extrapolate _ Runter _ = Nothing
 extrapolate _ Hoch _ = Nothing
+
+
+-- meetScan _ (Ray (Point _ Oben) _)
+--     = error "meetScan: Ausgang des Strahls ist Oben"
+-- meetScan scan (Ray (Point x0 (Y y0)) (Point x1 Unten))
+--     | scan == x0 && x0 == x1 
+--         = (Unten, Y y0)
+--     | otherwise = (Unten, Unten)
+-- meetScan scan (Ray (Point x0 (Y y0)) (Point x1 Oben))
+--     | scan == x0 && x0 == x1 
+--         = (Y y0, Oben)
+--     | otherwise = (Oben, Oben)
+
+allowed :: X -> Point -> R -> Maybe (Interval Y)
+allowed scan p@(Point x0 y0) r
+    = case compare scan x0 
+      LT -> error "allowed: Please only ask when scan > x0."
+      EQ -> case r of
+              Runter -> Just $ LOpen y0
+              R _ -> Just $ Here y0
+              Hoch -> Just $ UOpen y0
+      GT -> do liftM Here $ extrapolate p r scan
 
 prop_makeR p0@(Point x0 y0) p1@(Point x1 y1) 
     = (x0 < x1) && (y0 /= y1) ==>
@@ -57,7 +81,7 @@ instance Arbitrary Point where
                             y' <- shrink y
                             return $ Point x' y'
 
-data Point = Point {x :: !X, y::!Y} deriving (Eq, Ord)
+data Point = Point {x :: !X, y :: !Y} deriving (Eq, Ord)
 
 instance Show Point where
     show (Point x y) = "("++ sx ++ " " ++ sy ++ ")"
@@ -89,48 +113,55 @@ areaSup p@(Poly lower@(l@(Point lx ly):_) upper@(u@(Point ux uy):_) inf sup)
             -> if mx <= lx || mx <= ux
                then maxA
                else areaCPoly (CPoly (m:lower) (m:upper))
+data TryAdd = TryAdd (Point -> Poly -> Poly)
+instance Arbitrary TryAdd where
+    arbitrary = oneof [tryAddLower, tryAddUpper]
 
 instance Arbitrary Poly where
-    arbitrary = do l <- arbitrary
-                   u <- arbitrary
-                   let lS = sortBy (compare `on` x) l
-                       uS = sortBy (compare `on` x) u
+    arbitrary = do links <- arbitrary
+                   sized (tryAddN (openNew links))
+        where tryAddN poly 0 = return poly
+              tryAddN poly n = if not $ isOpenAt (rechts poly) poly
+                               then return poly
+                               else do (TryAdd add) <- arbitrary
+                                       p <- arbitrary
+                                       case add p poly of
+                                         Nothing -> tryAddN poly n
+                                         Just poly' -> tryAddN poly' (n-1)
+
+rechts :: Poly -> X
+rechts (Poly lower upper _ _) = max `on` (x . head)
+links :: Poly -> X
+links (Poly lower upper _ _) = min `on` (x . last)
+
+addable :: Point -> Poly -> Bool
+addable p@(Point x y) (Poly lower@(l:_) upper@(u:_) inf sup)
+    = inf <= infN && supN <= sup
+    where infN = makeR l p
+          supN = makeR u p
+
+tryAddLower :: Integer -> Integer -> Poly -> Poly
+tryAddLower (Point dx y) poly@(Poly (lower@(l@(Point lx ly):_)) upper inf sup)
+    = if  px < lx || (infN < inf)
+      then Nothing
+      else Just (Poly (p:lower) upper infN sup)
+    where infN = makeR l p
+          p@(Point px py) = Point (lx + abs dx) y
+          
+          
+
+tryAddUpper :: Point -> Poly -> Poly
+tryAddUpper (Point dx y) poly@(Poly lower upper@(u@(Point ux uy):_) inf sup)
+    = if  px < ux || (sup < supN)
+      then Nothing
+      else Just (Poly l (p:upper) inf supN)
+    where supN = makeR l p 
+          p@(Point px py) = Point (lx + abs dx) y
 
 prop_area p = areaSup p >= areaCPoly (close p)
 
 
--- meetScan :: X -> Ray -> (Y,Y)
--- meetScan _ (Ray (Point _ Unten) _)
---     = error "meetScan: Ausgang des Strahls ist Unten"
--- meetScan _ (Ray (Point _ Oben) _)
---     = error "meetScan: Ausgang des Strahls ist Oben"
--- meetScan scan (Ray (Point x0 (Y y0)) (Point x1 Unten))
---     | scan == x0 && x0 == x1 
---         = (Unten, Y y0)
---     | otherwise = (Unten, Unten)
--- meetScan scan (Ray (Point x0 (Y y0)) (Point x1 Oben))
---     | scan == x0 && x0 == x1 
---         = (Y y0, Oben)
---     | otherwise = (Oben, Oben)
--- meetScan ( scan) (Ray (Point ( x0) (Y y0))
---                        (Point ( x1) (Y y1)))
---     = if dxRay == 0
---       then if scan == x0
---            then case compare dyRay 0 of
---                   GT -> (Y y0, Oben)
---                   EQ -> error "meetScan: delta(ray) is (0,0), and scanline is at ray."
---                   LT -> (Unten, Y y0)
---            else case compare dyRay 0 of
---                   GT -> (Oben, Oben)
---                   EQ -> error "meetScan: delta(ray) is (0,0)"
---                   LT -> (Unten, Unten)
---       else (Y (dyEcht + y0), Y (dyEcht + y0))
---     where dxRay = x1 - x0
---           dyRay = y1 - y0
 
---           dxEcht = scan - x0
---           dyEcht = --trace ("dxRay: " ++ show dxRay ++ "\n") $
---                    (dyRay * dxEcht / dxRay)
 
 type Lines = [Point]
 
@@ -169,13 +200,16 @@ openNew links@(Point x y) = (Poly [links] [links]
 
 
 
-isOpenAt scan (Poly (l@(Point lx _):_)
-                    (u@(Point ux _):_)
+isOpenAt scan poly@(Poly (l@(Point lx ly):_)
+                    (u@(Point ux uy):_)
                     inf
                     sup)
-    = if scan <= lx || scan <= ux
-      then True
-      else case (inf, sup) of
+    = case compare scan (rechts poly) of
+        LT -> True
+        EQ -> if (lx == ux) 
+              then abs (uy - ly) > 1
+              else True
+        GT -> case (inf, sup) of
              (_, Runter) -> False
              (Hoch, _) -> False
              (R _, R _)
