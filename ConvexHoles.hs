@@ -33,7 +33,9 @@ makeR (Point x0 y0) (Point x1 y1)
                 GT -> Hoch
         GT -> R $ ((y1 - y0) / (x1 - x0))
 
-data Interval x = LOpen x | Here x | UOpen x
+data Interval x = LOpen x | Closed x x | Here x | UOpen x
+                | LUOpen
+                  deriving EQ
 
 extrapolate :: Point -> R -> X -> Maybe Y
 extrapolate (Point x0 y0) (R r) atX
@@ -62,6 +64,21 @@ allowed scan p@(Point x0 y0) r
               R _ -> Just $ Here y0
               Hoch -> Just $ UOpen y0
       GT -> do liftM Here $ extrapolate p r scan
+
+infInt :: Interval Y -> Interval Y
+infInt i@(Here x) = UOpen x
+infInt i@(Closed l u) = UOpen l
+infInt i@(LOpen y) = UOpen y
+infInt i@(UOpen _) = i
+
+supInt :: Interval Y -> Interval Y
+infInt i@(Here x) = LOpen x
+infInt i@(Closed l u) = LOpen u
+infInt i@(LOpen y) = UOpen y
+infInt i@(UOpen _) = i
+
+combine :: (Interval Y) -> (Interval Y) -> (Interval Y)
+combine lowerInter upperInter = 
 
 prop_makeR p0@(Point x0 y0) p1@(Point x1 y1) 
     = (x0 < x1) && (y0 /= y1) ==>
