@@ -84,31 +84,32 @@ makeR (Point x0r y0r z0r) (Point x1r y1r z1r)
 cmp :: Point -> R -> Point -> Ordering
 cmp p0 r pn = compare (makeR p0 pn) r
 
-areaL2 :: Lines -> Integer
-areaL2 [] = 0
-areaL2 [_] = 0
-areaL2 l = sum $ zipWith areaTrapez2 (init l) (tail l)
+areaL2 :: Lines -> Maybe Float
+areaL2 [] = Just 0
+areaL2 [_] = Just 0
+areaL2 l = liftM sum . sequence $ zipWith areaTrapez2 (init l) (tail l)
 areaTrapez2 a b
-    = (x1 - x0) * (y0+y1)
-      where (Point2 (x0) (y0)) = mkPoint2 a
-            (Point2 ( x1) (y1)) = mkPoint2 b
+    = do (Point2 (x0) (y0)) <- mkPoint2 a
+         (Point2 ( x1) (y1)) <- mkPoint2 b
+         return $ (x1 - x0) * (y0+y1)
 
-areaCPoly2 :: CPoly -> Integer
-areaCPoly2 (CPoly lower upper) = areaL2 lower - areaL2 upper
+areaCPoly2 :: CPoly -> Maybe Float
+areaCPoly2 (CPoly lower upper) = do al <- areaL2 lower
+                                    au <- areaL2 upper
+                                    return (al - au)
 
 range = (-1000,1000)
 (rI,rS) = range
 maxA2 = 2 * (rS-rI) ^ 2
 
-areaSup2 :: Poly -> Integer
-areaSup2 _ = ceiling undefined
+areaSup2 :: Poly -> Maybe Float
 areaSup2 p@(Poly lower@(l@(Point lx ly lz):_) upper@(u@(Point ux uy uz):_) inf sup)
     = case meet2 inf sup of
         -- Solte noch pruefen, ob die beiden 
-        (Point _ _ 0) -> maxA2
+        (Point _ _ 0) -> Just maxA2
         m@(Point x y z)
-            -> if m `linksVon` l || m `linksVon` u
-               then maxA2
+            -> if m `linksVon` l /= GT || m `linksVon` u /= GT
+               then Just maxA2
                else areaCPoly2 (CPoly (m:lower) (m:upper))
 
 data TryAdd = TryAdd (Point -> Poly -> Poly)
@@ -187,9 +188,9 @@ data CPoly = CPoly {l :: !Lines, u :: !Lines}
            deriving (Ord, Eq)
 
 openNew :: Point -> Poly
-openNew links@(Point x y) = (Poly [links] [links]
-                             (makeH links (links - Point 0 1))
-                             (makeH links (links + Point 0 1)))
+openNew links@(Point x y z) = (Poly [links] [links]
+                               (makeH links (links - Point 0 1 1))
+                               (makeH links (links + Point 0 1 1)))
 --                           Runter  Hoch)
 
 
@@ -197,12 +198,13 @@ openNew links@(Point x y) = (Poly [links] [links]
 
 
 
-isOpenAt scan poly@(Poly _
-                    _
-                    inf
-                    sup)
-    = let p = Point scan 0
-      in inside p inf || inside p sup
+-- isOpenAt scan poly@(Poly _
+--                     _
+--                     inf
+--                     sup)
+--     = let p = Point scan 0 1
+--       in inside p inf || inside p sup
+
 --       case compare scan (rechts poly) of
 --         LT -> True
 --         EQ -> if (lx == ux) 
@@ -218,26 +220,26 @@ isOpenAt scan poly@(Poly _
 --                        return (syInf < sySup)
 --              _ -> True
 
-examine :: Poly -> WriterT [CPoly] (State Integer) (Maybe Poly)
+examine :: Poly -> WriterT [CPoly] (State Float) (Maybe Poly)
 examine p = do bestSeen <- get
-               (if areaSup2 p < bestSeen
+               (if fromJust (areaSup2 p) < bestSeen
                 then return Nothing
-                else do modify (max (areaCPoly2 (close p)))
+                else do modify (max (fromJust $ areaCPoly2 (close p)))
                         return $ Just p)
                                
 
-treatScan1o1 :: Point -> Poly -> WriterT [CPoly] (State Integer) [Poly]
-treatScan1o1 pN@(Point xN yN) polyO@(Poly lower@(l:_) 
-                                          upper@(u:_)
-                                          inf
-                                          sup)
+treatScan1o1 :: Point -> Poly -> WriterT [CPoly] (State Float) [Poly]
+treatScan1o1 pN@(Point xN yN zN) polyO@(Poly lower@(l:_) 
+                                        upper@(u:_)
+                                        inf
+                                        sup)
     = if True -- isOpenAt xN $ polyO
       then (sequence . map examine $ polyN)
            >>= return . catMaybes
       else do let c = close polyO
               {- trace ("closed:\t"++show c++"\narea:\t"++show (areaCPoly c)) $ -}
               tell [c]
-              modify (max (areaCPoly2 c))
+              modify (max (fromJust $ areaCPoly2 c))
               return $ []
     where 
           infN = makeH l pN
@@ -264,11 +266,11 @@ close polyO@(Poly lower@(l:_)
         GT -> CPoly lower (l:upper)
 
 prop_close left (NonEmpty lo) (NonEmpty up) = l == u
-    where (CPoly (l:_) (u:_)) = close (Poly (map mkPoint lo ++ [mkPoint left]) (map mkPoint up ++ [mkPoint left]) undefined undefined)
+    where (CPoly (l:_) (u:_)) = close (Poly (map mkPointI lo ++ [mkPointI left]) (map mkPointI up ++ [mkPointI left]) undefined undefined)
 
 
 
-run1p :: Point -> [Poly] -> WriterT [CPoly] (State Integer) [Poly]
+run1p :: Point -> [Poly] -> WriterT [CPoly] (State Float) [Poly]
                              -- Writer [Poly] (S.Set Poly)
 run1p pN polys = liftM ((openNew pN:) . concat)
                  . sequence . fmap (treatScan1o1 pN)
@@ -278,17 +280,17 @@ run1p pN polys = liftM ((openNew pN:) . concat)
 --                 >>= liftM ((:) (openNew pN))
 
 
-run :: [Point] -> (([Poly], [CPoly]), Integer)
+run :: [Point] -> (([Poly], [CPoly]), Float)
 run ps = (runState (runWriterT (doAll ps)) (-999))
     --runWriter . doAll
-      where doAll :: [Point] -> WriterT [CPoly] (State Integer) [Poly]
+      where doAll :: [Point] -> WriterT [CPoly] (State Float) [Poly]
                      -- Writer [Poly] (S.Set Poly)
             doAll = foldl (>>=) (return $ []) . map run1p . nub . sort
 
 allClose = map close . uncurry (++)
 
-bestCPoly :: [CPoly] -> Integer --[Float]
-bestCPoly cp = maximum . map (areaCPoly2) $ cp
+bestCPoly :: [CPoly] -> Float --[Float]
+bestCPoly cp = maximum . map (fromJust . areaCPoly2) $ cp
 
 
 assoc f l = zip l (map f l)
@@ -303,10 +305,10 @@ f s = (s^2) `mod` 50515093
 
 t = map p . splitEvery 2 . map c . tail . iterate f
     where c s = (s `mod` 2000) - 1000
-          p [a,b] = Point (id . fromIntegral $ a) (fromIntegral $ b)
+          p [a,b] = Point (id . fromIntegral $ a) (fromIntegral $ b) 1
 
-t1 = map mkPoint $
-     [(0,0)
+t1 = map mkPointI $
+     [(0,01)
      ,(1,1)
      ,(1,-1)
      ,(2,0)
@@ -314,7 +316,7 @@ t1 = map mkPoint $
      ,(3,0)
      ]
 
-t2 = map mkPoint $
+t2 = map mkPointI $
      [
 --      (-883, -38) 
 --     (-827, -607) 
@@ -332,9 +334,7 @@ t2 = map mkPoint $
      ,(913, -860) ]
 --     [(-883, -38) ,(-827, -607) ,(-811, 286) ,(-754, 70) ,(-665, -726) ,(-646, -422) ,(-488, 732) ,(-477, -23) ,(-454, -947) ,(-389, 938) ,(-178, 540) ,(-60, 138) ,(54, 316) ,(273, -175) ,(331, 698) ,(491, 368) ,(527, 144) ,(806, 528) ,(913, -860) ]
 
-negateX (Point x y) = (Point (-x) y)
-negateY (Point x y) = (Point (x) (-y))
-negateXY = negateX . negateY
+
 
 bestC t = let ((o,c),bestClosed) = run $  t
               bestOpen = bestCPoly $ map close (toList o)
@@ -342,7 +342,7 @@ bestC t = let ((o,c),bestClosed) = run $  t
 
 mkPoints xy = t
     where (x,y) = unzip xy
-          t = map mkPoint $ zip (map fromIntegral x) (map fromIntegral y)
+          t = map mkPointI $ zip (map fromIntegral x) (map fromIntegral y)
 
 prop_bestCX (NonEmpty xy) = bestC t == bestC (map negateX t)
     where t = mkPoints xy
@@ -357,13 +357,13 @@ doT t = do let ((o,c),bestClosed) = run $  t
            putStrLn "-------"
            putStr "bestClosed:\t"
            print bestClosed
---           putStr "open:\t"
---           print (assoc (areaCPoly . close) . toList $ o)
+           putStr "open:\t"
+           print (assoc (areaCPoly2 . close) . toList $ o)
            putStr "bestOpen:\t"
            print bestOpen
            putStr "best:\t"
            putStrLn $ show $ max bestClosed bestOpen
-           putStrLn $ show $ fromIntegral (max bestClosed bestOpen) / 2
+           putStrLn $ show $ (max bestClosed bestOpen) / 2
 
 main = do {- putStrLn $ unlines $ map show $ c
           putStrLn "---"

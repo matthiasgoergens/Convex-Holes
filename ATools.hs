@@ -48,6 +48,10 @@ instance Num Point where
            = (Point (signum x) y z)
         where (Point x y z) = normalize p
 
+negateX (Point x y z) = normalize (Point (-x) y z)
+negateY (Point x y z) = normalize (Point (x) (-y) z)
+negateXY = negateX . negateY
+
 normalize p@(Point x y z) | z < 0 = Point (-x) (-y) (-z)
                           | otherwise = p
 

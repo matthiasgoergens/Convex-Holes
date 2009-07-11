@@ -60,6 +60,7 @@ meet2 (H a0 b0 c0) (H a1 b1 c1) = normalize (Point x y z)
 ccw90 (Point x y z) = Point (-y) x z
 
 mkPoint (x,y,z) = Point x y z
+mkPointI (x,y) = Point x y 1
 
 prop_ccw90 p = p == (ccw90 . ccw90 . ccw90 . ccw90 $ p)
 prop_ccw1 = (take 5 . iterate ccw90 $ (Point 1 0 1))
