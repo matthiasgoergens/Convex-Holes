@@ -4,10 +4,12 @@ module ATools where
 import Test.QuickCheck
 import Data.Ratio
 
+type K = Int
+
 instance Arbitrary Point where
-    arbitrary = do (x::Integer) <- arbitrary
-                   (y::Integer) <- arbitrary
-                   (z::Integer) <- arbitrary
+    arbitrary = do (x::K) <- arbitrary
+                   (y::K) <- arbitrary
+                   (z::K) <- arbitrary
                    return $ normalize $ Point (fromIntegral x) (fromIntegral y) (fromIntegral z)
     shrink (Point x y z) = do x' <- shrink x
                               y' <- shrink y
@@ -19,7 +21,7 @@ scm a b = a * b `div` gcd a b
 linksVon (Point ax _ az) (Point bx _ bz) 
     = compare (ax * bz) (bx * az)
 
-(~*) :: Integer -> Point -> Point
+(~*) :: K -> Point -> Point
 (~*) a (Point x y z) = (Point (a*x) (a*y) z)
 
 isFinite (Point _ _ 0) = False
@@ -65,7 +67,7 @@ data Point2 = Point2 !Float !Float
 
 mkPoint2 :: Point -> Maybe Point2
 mkPoint2 (Point _ _ 0) = Nothing
-mkPoint2 (Point x y z) = Just $ Point2 (fromRational (x % z)) (fromRational (y % z))
+mkPoint2 (Point x y z) = Just $ Point2 (fromIntegral x / fromIntegral z) (fromIntegral y / fromIntegral z)
 
 instance Ord Point where
     compare (Point xa ya za) (Point xb yb zb)
@@ -84,7 +86,6 @@ instance Eq Point where
 --                        '0':'.':_ -> reverse . drop 2 . reverse $ s
 --                        _ -> s
 
-type K = Integer
 type X = K
 type Y = K
 type Z = K

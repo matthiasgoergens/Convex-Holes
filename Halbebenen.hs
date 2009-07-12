@@ -6,7 +6,7 @@ import Control.Monad
 import Data.List
 
 -- Ord nur fuer Data.Set und so.  Zumindest Eq kann man auch richtig definieren.
-data Halbebene = H K K K deriving (Show)
+data Halbebene = H !K !K !K deriving (Show)
 
 normalizeH h@(H a b c) | c < 0 = H (-a) (-b) (-c)
                        | otherwise = h 

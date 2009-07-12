@@ -7,7 +7,7 @@ import Control.Monad
 import Data.List
 import Data.Foldable (toList)
 import Data.Function
---import Debug.Trace
+
 import System
 import qualified Data.Set as S
 import Control.Monad.State.Strict
@@ -17,13 +17,13 @@ import Data.Maybe
 import Halbebenen
 import ATools
 
-
-trace = flip const
+import Debug.Trace
+--trace = flip const
 
 areaL2 :: Lines -> Maybe Float
 areaL2 [] = Just 0
 areaL2 [_] = Just 0
-areaL2 l = liftM sum . sequence $ zipWith areaTrapez2 (init l) (tail l)
+areaL2 l = liftM (sum) . sequence $ zipWith areaTrapez2 (init l) (tail l)
 areaTrapez2 a b
     = do (Point2 (x0) (y0)) <- mkPoint2 a
          (Point2 ( x1) (y1)) <- mkPoint2 b
@@ -32,11 +32,11 @@ areaTrapez2 a b
 areaCPoly2 :: CPoly -> Maybe Float
 areaCPoly2 (CPoly lower upper) = do al <- areaL2 lower
                                     au <- areaL2 upper
-                                    return (al - au)
+                                    return (abs (al - au))
 
 range = (-1000,1000)
 (rI,rS) = range
-maxA2 = 2 * (rS-rI) ^ 2
+maxA2 = 2 * fromIntegral (rS-rI) ^ 2
 
 areaSup2 :: Poly -> Maybe Float
 areaSup2 p@(Poly lower@(l@(Point lx ly lz):_) upper@(u@(Point ux uy uz):_) inf sup)
@@ -57,11 +57,19 @@ instance Arbitrary TryAdd where
 
 instance Arbitrary Poly where
      arbitrary = do links <- arbitrary
-                    sized (tryAddN (openNew links))
+                    oneof [sized (tryAddN (openNew links))
+                          ,triang]
          where tryAddN poly 0 = return poly
                tryAddN poly n = do (TryAdd add) <- arbitrary
                                    p <- arbitrary
                                    tryAddN (add p poly) (n-1)
+               triang = do links <- arbitrary
+                           (Point x y z) <- arbitrary
+                           let p = Point (abs x) (abs y) 1
+                               pn = Point (abs x) (0 - abs y) 1
+                           sized (tryAddN $ tryAddLower (links + pn) $ tryAddUpper (links + p) $ openNew links)
+                           
+
 
 rechts :: Poly -> Point
 rechts (Poly lower upper _ _) = maximumBy linksVon $ lower ++ upper
@@ -76,7 +84,7 @@ tryAddLower pN poly@(Poly lower@(l:_) upper@(u:_) inf sup)
              _ -> poly
       else poly
     where infN = makeH l pN
-          supN = makeH u pN
+          supN = makeH pN u
 
 tryAddUpper :: Point -> Poly -> Poly
 tryAddUpper pN poly@(Poly lower@(l:_) upper@(u:_) inf sup)
@@ -86,7 +94,7 @@ tryAddUpper pN poly@(Poly lower@(l:_) upper@(u:_) inf sup)
              _ -> poly
       else poly
     where infN = makeH l pN
-          supN = makeH u pN
+          supN = makeH pN u
 
 --       then Nothing
 --       else Just (Poly (p:lower) upper infN sup)
@@ -122,25 +130,38 @@ data CPoly = CPoly {l :: !Lines, u :: !Lines}
            deriving (Ord, Eq)
 
 openNew :: Point -> Poly
-openNew links@(Point x y z) = (Poly [links] [links]
-                               (makeH links (links - Point 0 1 1))
-                               (makeH links (links + Point 0 1 1)))
+openNew l = (Poly [links] [links]
+             (makeH links (links - Point 0 1 1))
+             (makeH links (links - Point 0 1 1)))
+    where links = normalize l
 --                           Runter  Hoch)
+
+prop_openNewL p = inside p' hL 
+    where (Poly _ _ hL hU) = openNew p
+          p' = p + mkPointI (1, 0)
+prop_openNewLtriv p = inside p' hL 
+    where (Poly _ _ hL hU) = openNew p
+          p' = p + mkPointI (1, 0)
+prop_openNewU p = inside p' hU
+    where (Poly _ _ hL hU) = openNew p
+          p' = p + mkPointI (1, 0)
+prop_openNewUtriv p = inside p hU
+    where (Poly _ _ hL hU) = openNew p
+          p' = p + mkPointI (1, 0)
 
 
 -- WriterT Trace (State z) a
 
 
 
-examine :: Poly -> WriterT [CPoly] (State Float) (Maybe Poly)
+examine :: Poly -> (State Float) (Maybe Poly)
 examine p = do bestSeen <- get
                (if fromJust (areaSup2 p) < bestSeen
                 then return Nothing
                 else do modify (max (fromJust $ areaCPoly2 (close p)))
                         return $ Just p)
-                               
 
-treatScan1o1 :: Point -> Poly -> WriterT [CPoly] (State Float) [Poly]
+treatScan1o1 :: Point -> Poly -> (State Float) [Poly]
 treatScan1o1 pN@(Point xN yN zN) polyO@(Poly lower@(l:_) 
                                         upper@(u:_)
                                         inf
@@ -150,24 +171,27 @@ treatScan1o1 pN@(Point xN yN zN) polyO@(Poly lower@(l:_)
            >>= return . catMaybes
       else do let c = close polyO
               {- trace ("closed:\t"++show c++"\narea:\t"++show (areaCPoly c)) $ -}
-              tell [c]
+              -- tell [c]
               modify (max (fromJust $ areaCPoly2 c))
               return $ []
     where 
           infN = makeH l pN
-          supN = makeH u pN
+          supN = makeH pN u
+          rangeUnten = Point xN (rI*zN) zN
+          rangeOben = Point xN (rS*zN) zN
 
-          polyN = case (inside pN inf, inside pN sup) of
-                    (True, True) -> [Poly lower (pN:upper) inf supN
-                                    ,Poly lower     upper  inf supN
-                                    ] ++
-                                   [Poly (pN:lower) upper infN sup
-                                   ,Poly     lower  upper infN sup
-                                   ]
-                    (False, False) -> trace ("No continuation for "++show polyO ++ " at " ++ show pN) $
-                                      []
-                    _ -> [polyO]
-
+          polyN = if inside rangeUnten sup && inside rangeOben inf
+                  then case (inside pN inf, inside pN sup) of
+                         (True, True) -> [Poly lower (pN:upper) inf supN
+                                         ,Poly lower     upper  inf supN
+                                         ] ++
+                                        [Poly (pN:lower) upper infN sup
+                                        ,Poly     lower  upper infN sup
+                                        ]
+                         (False, False) -> {- trace ("No continuation for "++show polyO ++ " at " ++ show pN) $-} []
+                         _ -> {-trace ("komplett oben oder untenrum") $ -} [polyO]
+                  else []
+                         
 close :: Poly -> CPoly
 close polyO@(Poly lower@(l:_)
                   upper@(u:_)
@@ -182,22 +206,27 @@ prop_close left (NonEmpty lo) (NonEmpty up) = l == u
 
 
 
-run1p :: Point -> [Poly] -> WriterT [CPoly] (State Float) [Poly]
+run1p :: Point -> [Poly] -> (State Float) [Poly]
                              -- Writer [Poly] (S.Set Poly)
-run1p pN polys = liftM ((openNew pN:) . concat)
+run1p pN polys = liftM (concat)
                  . sequence . fmap (treatScan1o1 pN)
-                 . trace ("#polys:\t" ++ show (length polys) ++"\tpn: "++show pN++ "\tpolys:\t"++show polys++"\n-+-+-\n")
+--                 . trace ("#polys:\t" ++ show (length polys) ++"\tpn: "++show pN)
                  $ polys
 
 --                 >>= liftM ((:) (openNew pN))
 
 
-run :: [Point] -> (([Poly], [CPoly]), Float)
-run ps = (runState (runWriterT (doAll ps)) (-999))
+run :: [Point] -> ((), Float)
+run ps = (runState (sequence_ $ map doAll (init . tails . nub . sort $ ps))
+                       (-999))
     --runWriter . doAll
-      where doAll :: [Point] -> WriterT [CPoly] (State Float) [Poly]
-                     -- Writer [Poly] (S.Set Poly)
-            doAll = foldl (>>=) (return $ []) . map run1p . nub . sort
+      where doAll :: [Point] -> (State Float) ()
+            doAll (links:rest) = do open <- foldl (>>=) (return $ [openNew links]) . map run1p $ rest
+                                    modify (t . max (maximum (map (fromJust . areaCPoly2 . close) open)))
+                                    
+                                    return ()
+                where t s = trace ("length:\t" ++ show (length rest)++"\thigh:\t" ++ show s) s
+
 
 allClose = map close . uncurry (++)
 
@@ -248,9 +277,9 @@ t2 = map mkPointI $
 
 
 
-bestC t = let ((o,c),bestClosed) = run $  t
-              bestOpen = bestCPoly $ map close (toList o)
-          in max bestClosed bestOpen 
+bestC t = let ((),bestClosed) = run $ t
+              -- bestOpen = bestCPoly $ map close (toList o)
+          in bestClosed
 
 mkPoints xy = t
     where (x,y) = unzip xy
@@ -264,18 +293,18 @@ prop_bestCY (NonEmpty xy) = bestC t == bestC (map negateY t)
 prop_bestCXY (NonEmpty xy) = bestC t == bestC (map (negateX . negateY) t)
     where t = mkPoints xy
 
-doT t = do let ((o,c),bestClosed) = run $  t
-               bestOpen = bestCPoly $ map close (toList o)
+doT t = do let (_,bestClosed) = run $  t
+--               bestOpen = bestCPoly $ map close (toList o)
            putStrLn "-------"
            putStr "bestClosed:\t"
            print bestClosed
-           putStr "open:\t"
-           print (assoc (areaCPoly2 . close) . toList $ o)
-           putStr "bestOpen:\t"
-           print bestOpen
-           putStr "best:\t"
-           putStrLn $ show $ max bestClosed bestOpen
-           putStrLn $ show $ (max bestClosed bestOpen) / 2
+--           putStr "open:\t"
+--           print (assoc (areaCPoly2 . close) . toList $ o)
+--           putStr "bestOpen:\t"
+--           print bestOpen
+--           putStr "best:\t"
+           putStrLn $ show $ bestClosed 
+           putStrLn $ show $ bestClosed / 2
 
 main = do {- putStrLn $ unlines $ map show $ c
           putStrLn "---"
@@ -289,8 +318,8 @@ main = do {- putStrLn $ unlines $ map show $ c
               t2 = take n (t s0)
               t' = tx
           doT t2
---          putStrLn "negated:"
---          doT (map negateX t')
+          putStrLn "negated:"
+          doT (map negateX t')
 
 --          print $ sort t'
           
@@ -314,11 +343,11 @@ t3 = mkPoints [      (1,-1)
 --        m: Just (0 Y (-0.0)),0.5)
 
 
-tx = mkPoints pz
+tx = mkPoints px
 px=[
---          {-,(3,1)-} ,(4,1)
+    (3,1) ,(4,1)
 
-                       (2,2)
+   ,(2,2)
    ,(0,0),       (1,0), (2,0)]
 
 py = [(0,3)
@@ -326,6 +355,8 @@ py = [(0,3)
     ,(0,1),(1,1)
                ,(2,0)]
 
-pz = [(0,0),(1,0),(1,1)]
+pz = [(0,0),(1,0),(0,1)]
+
+pa = [(2,0),(1,1),(0,0)]
 
 
