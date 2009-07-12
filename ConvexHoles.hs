@@ -41,7 +41,7 @@ maxA2 = 2 * fromIntegral (rS-rI) ^ 2
 areaSup2 :: Poly -> Maybe Float
 areaSup2 p@(Poly lower@(l@(Point lx ly lz):_) upper@(u@(Point ux uy uz):_) inf sup)
     = case meet2 inf sup of
-        -- Solte noch pruefen, ob die beiden 
+        -- Solte noch pruefen, ob die beiden (was?)
         (Point _ _ 0) -> Just maxA2
         m@(Point x y z)
             -> if m `linksVon` l /= GT || m `linksVon` u /= GT
@@ -161,6 +161,8 @@ examine p = do bestSeen <- get
                 else do modify (max (fromJust $ areaCPoly2 (close p)))
                         return $ Just p)
 
+-- convert to dfs! -> weniger RAM
+
 treatScan1o1 :: Point -> Poly -> (State Float) [Poly]
 treatScan1o1 pN@(Point xN yN zN) polyO@(Poly lower@(l:_) 
                                         upper@(u:_)
@@ -205,6 +207,14 @@ prop_close left (NonEmpty lo) (NonEmpty up) = l == u
     where (CPoly (l:_) (u:_)) = close (Poly (map mkPointI lo ++ [mkPointI left]) (map mkPointI up ++ [mkPointI left]) undefined undefined)
 
 
+runDeep1 :: [Point] -> Poly -> (State Float) ()
+runDeep1 [] cur = do examine cur
+                     return ()
+runDeep1 (pN:rest) cur = do polyN <- treatScan1o1 pN cur
+                            mapM_ (runDeep1 rest) $  polyN
+--                                  trace ("#polys:\t" ++ show (length polyN) ++"\tpn: "++show pN) 
+                                           
+
 
 run1p :: Point -> [Poly] -> (State Float) [Poly]
                              -- Writer [Poly] (S.Set Poly)
@@ -215,17 +225,27 @@ run1p pN polys = liftM (concat)
 
 --                 >>= liftM ((:) (openNew pN))
 
-
-run :: [Point] -> ((), Float)
-run ps = (runState (sequence_ $ map doAll (init . tails . nub . sort $ ps))
-                       (-999))
+runDeep :: [Point] -> ((), Float)
+runDeep ps = (runState (mapM_ doAll (init . tails . nub . sortBy linksVon $ ps))
+                       (-1000))
     --runWriter . doAll
       where doAll :: [Point] -> (State Float) ()
-            doAll (links:rest) = do open <- foldl (>>=) (return $ [openNew links]) . map run1p $ rest
-                                    modify (t . max (maximum (map (fromJust . areaCPoly2 . close) open)))
+            doAll (links:rest) = do best <- get
+                                    let xyzzy k = trace ("length:\t" ++ show (length rest)++"\thigh:\t" ++ show best) k
+                                    (xyzzy runDeep1 rest (openNew links))
                                     
-                                    return ()
-                where t s = trace ("length:\t" ++ show (length rest)++"\thigh:\t" ++ show s) s
+                where 
+run = runDeep
+
+runBreadth :: [Point] -> ((), Float)
+runBreadth ps = (runState (mapM_ doAll (init . tails . nub . sortBy linksVon $ ps))
+                 (-999))
+    --runWriter . doAll
+    where doAll :: [Point] -> (State Float) ()
+          doAll (links:rest) = do open <- foldl (>>=) (return $ [openNew links]) . map run1p $ rest
+                                  modify (t . max (maximum (map (fromJust . areaCPoly2 . close) open)))
+                                  return ()
+              where t s = trace ("length:\t" ++ show (length rest)++"\thigh:\t" ++ show s) s
 
 
 allClose = map close . uncurry (++)
@@ -246,7 +266,7 @@ f s = (s^2) `mod` 50515093
 
 t = map p . splitEvery 2 . map c . tail . iterate f
     where c s = (s `mod` 2000) - 1000
-          p [a,b] = Point (id . fromIntegral $ a) (fromIntegral $ b) 1
+          p [b,a] = Point (id . fromIntegral $ a) (fromIntegral $ b) 1
 
 t1 = map mkPointI $
      [(0,01)
@@ -318,8 +338,8 @@ main = do {- putStrLn $ unlines $ map show $ c
               t2 = take n (t s0)
               t' = tx
           doT t2
-          putStrLn "negated:"
-          doT (map negateX t')
+--          putStrLn "negated:"
+--          doT (map negateX t')
 
 --          print $ sort t'
           
